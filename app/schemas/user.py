@@ -1,93 +1,64 @@
-"""User schemas."""
+# app/schemas/auth.py - UPDATE
 
-from typing import Optional, List
-from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
+"""Authentication schemas."""
+
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models.user import UserRole
-from app.schemas.common import TimestampSchema
 
 
-class UserBase(BaseModel):
-    """Base user schema."""
+class LoginRequest(BaseModel):
+    """Login with email and password."""
     
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+
+class LoginResponse(BaseModel):
+    """Login response with tokens."""
+    
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user_id: int
     role: UserRole
 
 
-class UserCreate(UserBase):
-    """Create user schema."""
+class OTPRequestRequest(BaseModel):
+    """Request OTP for phone login."""
     
-    password: Optional[str] = Field(None, min_length=8)
-    hostel_id: Optional[int] = None
+    phone: str = Field(..., pattern=r"^\+?[1-9]\d{1,14}$")
+    hostel_code: str = Field(..., min_length=3, max_length=50)
 
 
-class UserUpdate(BaseModel):
-    """Update user schema."""
+class OTPVerifyRequest(BaseModel):
+    """Verify OTP and login."""
     
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
-    is_active: Optional[bool] = None
+    phone: str = Field(..., pattern=r"^\+?[1-9]\d{1,14}$")
+    otp: str = Field(..., min_length=4, max_length=6)
 
 
-class UserResponse(BaseModel):
-    """User response schema."""
-    model_config = ConfigDict(from_attributes=True)
+class RefreshTokenRequest(BaseModel):
+    """Refresh access token."""
     
-    id: int
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    role: UserRole
-    hostel_id: Optional[int] = None  # This will be computed from primary_hostel_id
-    is_active: bool
-    is_verified: bool
-    last_login: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
-
-    @classmethod
-    def from_orm(cls, user):
-        """Custom from_orm to handle hostel_id mapping."""
-        data = {
-            'id': user.id,
-            'email': user.email,
-            'phone': user.phone,
-            'role': user.role,
-            'is_active': user.is_active,
-            'is_verified': user.is_verified,
-            'last_login': user.last_login,
-            'created_at': user.created_at,
-            'updated_at': user.updated_at,
-        }
-        
-        # Map primary_hostel_id to hostel_id
-        if user.role == UserRole.TENANT:
-            data['hostel_id'] = user.primary_hostel_id
-        elif user.role == UserRole.HOSTEL_ADMIN and user.hostels:
-            # For hostel admin, use first hostel in the list
-            data['hostel_id'] = user.hostels[0].id if user.hostels else None
-        else:
-            data['hostel_id'] = None
-            
-        return cls(**data)
+    refresh_token: str
 
 
-class UserProfile(UserResponse):
-    """Extended user profile."""
+class RegisterRequest(BaseModel):
+    """Hostel Admin registration - FIXED to only allow hostel admin registration."""
     
-    hostel_name: Optional[str] = None
-    hostel_ids: List[int] = []  # All hostels user has access to
+    email: EmailStr
+    phone: str = Field(..., pattern=r"^\+?[1-9]\d{1,14}$")
+    password: str = Field(..., min_length=8)
+    hostel_id: int = Field(..., description="Hostel ID that this admin will manage")
+    
+    # Optional fields
+    full_name: Optional[str] = Field(None, max_length=100, description="Admin's full name")
 
 
-class UserWithHostels(UserResponse):
-    """User with all associated hostels (for admins)."""
+class ChangePasswordRequest(BaseModel):
+    """Change password."""
     
-    hostel_ids: List[int] = []
-    
-    @classmethod
-    def from_orm(cls, user):
-        """Custom from_orm to include all hostel IDs."""
-        data = super().from_orm(user).__dict__
-        data['hostel_ids'] = user.get_hostel_ids()
-        return cls(**data)
+    old_password: str
+    new_password: str = Field(..., min_length=8)

@@ -73,6 +73,18 @@ class AuthService:
             if existing:
                 raise ConflictError("Phone already registered")
 
+        # ✅ UPDATED: For HOSTEL_ADMIN, hostel_id is REQUIRED
+        if role == UserRole.HOSTEL_ADMIN:
+            if not hostel_id:
+                raise ValidationError("Hostel ID is required for Hostel Admin registration")
+            
+            hostel = await self.hostel_repo.get(hostel_id)
+            if not hostel:
+                raise NotFoundError(f"Hostel with ID {hostel_id} not found")
+            
+            if not hostel.is_active:
+                raise ValidationError("Cannot register admin for inactive hostel")
+
         # Validate hostel for non-super-admin
         if role != UserRole.SUPER_ADMIN:
             if not hostel_id:
@@ -85,18 +97,31 @@ class AuthService:
         # Hash password if provided
         password_hash = hash_password(password) if password else None
 
-        # Create user
+        # ✅ UPDATED: Create user with primary_hostel_id for HOSTEL_ADMIN
         user_data = {
             "email": email,
             "phone": phone,
             "password_hash": password_hash,
             "role": role,
-            "primary_hostel_id": hostel_id,
+            "primary_hostel_id": hostel_id if role == UserRole.HOSTEL_ADMIN else None,
             "is_verified": True if role == UserRole.SUPER_ADMIN else False,
         }
 
         user = await self.user_repo.create(user_data)
+        await self.db.flush()  # Flush to get user.id
+        
+        # ✅ UPDATED: Associate hostel admin with hostel via association table
+        if role == UserRole.HOSTEL_ADMIN and hostel_id:
+            from app.models.associations import user_hostel_association
+            
+            stmt = user_hostel_association.insert().values(
+                user_id=user.id,
+                hostel_id=hostel_id
+            )
+            await self.db.execute(stmt)
+        
         await self.db.commit()
+        await self.db.refresh(user)
 
         return user
 

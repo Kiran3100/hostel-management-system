@@ -1,3 +1,5 @@
+# app/api/v1/auth.py - UPDATE REGISTER ENDPOINT
+
 """Authentication endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,11 +19,9 @@ from app.schemas.common import MessageResponse
 from app.schemas.user import UserResponse
 from app.services.auth import AuthService
 from app.api.deps import get_current_user
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.adapters.otp.mock import MockOTPProvider
 from app.config import settings
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -34,20 +34,37 @@ def get_otp_provider():
     return MockOTPProvider()
 
 
+# ✅ UPDATED: Removed role from request, hardcoded to HOSTEL_ADMIN
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Register a new user (Admin only - actual check done in service)."""
+    """
+    Register a new Hostel Admin.
+    
+    **Public endpoint** - Anyone can register as a hostel admin for a specific hostel.
+    
+    **Required fields:**
+    - `email`: Valid email address
+    - `phone`: Valid phone number (E.164 format)
+    - `password`: Minimum 8 characters
+    - `hostel_id`: ID of the hostel this admin will manage
+    
+    **Optional fields:**
+    - `full_name`: Admin's full name
+    
+    **Note:** The role is automatically set to `HOSTEL_ADMIN`.
+    """
     otp_provider = get_otp_provider()
     auth_service = AuthService(db, otp_provider)
 
+    # ✅ FIXED: Role is hardcoded to HOSTEL_ADMIN
     user = await auth_service.register_user(
         email=request.email,
         phone=request.phone,
         password=request.password,
-        role=request.role,
+        role=UserRole.HOSTEL_ADMIN,  # ✅ Hardcoded
         hostel_id=request.hostel_id,
     )
 
@@ -144,15 +161,14 @@ async def logout(
     return MessageResponse(message="Logged out successfully")
 
 
-
 @router.get("/me", response_model=UserResponse)
 async def get_me(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get current user profile."""
-    # Use the custom from_orm method to properly map fields
     return UserResponse.from_orm(current_user)
+
 
 @router.post("/change-password", response_model=MessageResponse)
 async def change_password(
