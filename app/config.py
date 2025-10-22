@@ -106,6 +106,14 @@ class Settings(BaseSettings):
     # Timezone
     storage_timezone: str = "UTC"
     default_display_timezone: str = "Asia/Kolkata"
+    
+    # Registration settings
+    registration_enabled: bool = True
+    email_verification_required: bool = True
+    visitor_default_duration_days: int = 30
+    
+    # Frontend URL for email links
+    frontend_url: str = "http://localhost:3000"
 
     # Tax (disabled)
     tax_enabled: bool = False

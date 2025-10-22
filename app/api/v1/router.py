@@ -20,6 +20,7 @@ from app.api.v1 import (
     users,
     visitor,  # ✅ NEW: Visitor public endpoints
     admin_visitors,  # ✅ NEW: Admin visitor management
+    self_registration,
 )
 
 api_router = APIRouter()
@@ -38,6 +39,7 @@ api_router.include_router(mess.router)
 api_router.include_router(leaves.router)
 api_router.include_router(notifications.router)
 api_router.include_router(reports.router)
+api_router.include_router(self_registration.router)
 
 # ✅ NEW: Visitor endpoints
 api_router.include_router(visitor.router)
