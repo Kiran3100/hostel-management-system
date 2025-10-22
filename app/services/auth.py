@@ -1,4 +1,4 @@
-"""Authentication service."""
+"""Authentication service - UPDATED WITH MULTI-HOSTEL SUPPORT."""
 
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -31,7 +31,7 @@ from app.adapters.otp.base import OTPProvider
 
 
 class AuthService:
-    """Authentication service."""
+    """Authentication service with multi-hostel support."""
 
     def __init__(
         self,
@@ -43,7 +43,6 @@ class AuthService:
         self.token_repo = RefreshTokenRepository(RefreshToken, db)
         self.otp_repo = OTPRepository(OTPCode, db)
         
-        # Import Hostel model here to avoid circular imports
         from app.models.hostel import Hostel
         self.hostel_repo = HostelRepository(Hostel, db)
         
@@ -56,8 +55,22 @@ class AuthService:
         password: Optional[str],
         role: UserRole,
         hostel_code: Optional[str] = None,
+        hostel_codes: Optional[list[str]] = None,  # ✅ NEW: Support multiple codes
     ) -> User:
-        """Register a new user using hostel code."""
+        """
+        Register a new user using hostel code(s).
+        
+        Args:
+            email: User email
+            phone: User phone
+            password: User password
+            role: User role
+            hostel_code: Single hostel code (for backward compatibility)
+            hostel_codes: List of hostel codes (for multi-hostel admins)
+        
+        Returns:
+            Created user with all hostel associations loaded
+        """
         # Validate at least one contact method
         if not email and not phone:
             raise ValidationError("Either email or phone is required")
@@ -73,21 +86,30 @@ class AuthService:
             if existing:
                 raise ConflictError("Phone already registered")
 
-        # Validate hostel for non-super-admin
-        hostel = None
+        # ✅ NEW: Handle multiple hostel codes
+        hostels = []
         hostel_id = None
+        
         if role != UserRole.SUPER_ADMIN:
-            if not hostel_code:
-                raise ValidationError("Hostel code required for non-admin users")
-
-            hostel = await self.hostel_repo.get_by_code(hostel_code)
-            if not hostel:
-                raise NotFoundError(f"Hostel with code '{hostel_code}' not found")
+            # Collect all hostel codes (prefer hostel_codes array, fallback to single code)
+            codes = hostel_codes if hostel_codes else ([hostel_code] if hostel_code else [])
             
-            if not hostel.is_active:
-                raise ValidationError(f"Hostel '{hostel.name}' is not active")
+            if not codes:
+                raise ValidationError("Hostel code(s) required for non-admin users")
             
-            hostel_id = hostel.id
+            # Validate all hostel codes and collect hostel objects
+            for code in codes:
+                hostel = await self.hostel_repo.get_by_code(code)
+                if not hostel:
+                    raise NotFoundError(f"Hostel with code '{code}' not found")
+                
+                if not hostel.is_active:
+                    raise ValidationError(f"Hostel '{hostel.name}' (code: {code}) is not active")
+                
+                hostels.append(hostel)
+            
+            # Set primary_hostel_id to the first hostel (for backward compatibility)
+            hostel_id = hostels[0].id if hostels else None
 
         # Hash password if provided
         password_hash = hash_password(password) if password else None
@@ -98,29 +120,134 @@ class AuthService:
             "phone": phone,
             "password_hash": password_hash,
             "role": role,
-            "primary_hostel_id": hostel_id,  # Set for all roles
+            "primary_hostel_id": hostel_id,  # First hostel for backward compatibility
             "is_verified": True if role == UserRole.SUPER_ADMIN else False,
         }
 
         user = await self.user_repo.create(user_data)
         
-        # ✅ NEW: For HOSTEL_ADMIN, also add to association table
-        if role == UserRole.HOSTEL_ADMIN and hostel:
-            # Add to the many-to-many relationship
+        # ✅ NEW: For HOSTEL_ADMIN, add ALL hostels to association table
+        if role == UserRole.HOSTEL_ADMIN and hostels:
             from sqlalchemy import insert
             from app.models.associations import user_hostel_association
             
-            stmt = insert(user_hostel_association).values(
-                user_id=user.id,
-                hostel_id=hostel.id
-            )
-            await self.db.execute(stmt)
+            # Add all hostels to the many-to-many relationship
+            for hostel in hostels:
+                stmt = insert(user_hostel_association).values(
+                    user_id=user.id,
+                    hostel_id=hostel.id
+                )
+                await self.db.execute(stmt)
         
         await self.db.commit()
         
         # ✅ NEW: Refresh user to load relationships
         await self.db.refresh(user)
 
+        return user
+
+    async def add_hostel_to_admin(
+        self,
+        user_id: int,
+        hostel_code: str,
+    ) -> User:
+        """
+        Add a hostel to an existing hostel admin.
+        
+        Args:
+            user_id: Admin user ID
+            hostel_code: Hostel code to add
+        
+        Returns:
+            Updated user with new hostel association
+        """
+        user = await self.user_repo.get(user_id)
+        if not user:
+            raise NotFoundError("User not found")
+        
+        if user.role != UserRole.HOSTEL_ADMIN:
+            raise ValidationError("User must be a hostel admin")
+        
+        # Validate hostel
+        hostel = await self.hostel_repo.get_by_code(hostel_code)
+        if not hostel:
+            raise NotFoundError(f"Hostel with code '{hostel_code}' not found")
+        
+        if not hostel.is_active:
+            raise ValidationError(f"Hostel '{hostel.name}' is not active")
+        
+        # Check if already associated
+        current_hostel_ids = user.get_hostel_ids()
+        if hostel.id in current_hostel_ids:
+            raise ConflictError(f"Admin already manages hostel '{hostel.name}'")
+        
+        # Add to association table
+        from sqlalchemy import insert
+        from app.models.associations import user_hostel_association
+        
+        stmt = insert(user_hostel_association).values(
+            user_id=user.id,
+            hostel_id=hostel.id
+        )
+        await self.db.execute(stmt)
+        await self.db.commit()
+        
+        # Refresh to load updated relationships
+        await self.db.refresh(user)
+        
+        return user
+
+    async def remove_hostel_from_admin(
+        self,
+        user_id: int,
+        hostel_id: int,
+    ) -> User:
+        """
+        Remove a hostel from an admin (must have at least one remaining).
+        
+        Args:
+            user_id: Admin user ID
+            hostel_id: Hostel ID to remove
+        
+        Returns:
+            Updated user
+        """
+        user = await self.user_repo.get(user_id)
+        if not user:
+            raise NotFoundError("User not found")
+        
+        if user.role != UserRole.HOSTEL_ADMIN:
+            raise ValidationError("User must be a hostel admin")
+        
+        # Check current hostels
+        current_hostel_ids = user.get_hostel_ids()
+        
+        if hostel_id not in current_hostel_ids:
+            raise ValidationError("Admin does not manage this hostel")
+        
+        if len(current_hostel_ids) == 1:
+            raise ValidationError("Cannot remove last hostel. Admin must manage at least one hostel.")
+        
+        # Remove from association table
+        from sqlalchemy import delete
+        from app.models.associations import user_hostel_association
+        
+        stmt = delete(user_hostel_association).where(
+            user_hostel_association.c.user_id == user.id,
+            user_hostel_association.c.hostel_id == hostel_id
+        )
+        await self.db.execute(stmt)
+        
+        # Update primary_hostel_id if we're removing it
+        if user.primary_hostel_id == hostel_id:
+            remaining_ids = [hid for hid in current_hostel_ids if hid != hostel_id]
+            await self.user_repo.update(user.id, {"primary_hostel_id": remaining_ids[0]})
+        
+        await self.db.commit()
+        
+        # Refresh to load updated relationships
+        await self.db.refresh(user)
+        
         return user
 
     async def login(self, email: str, password: str) -> Tuple[str, str, User]:
