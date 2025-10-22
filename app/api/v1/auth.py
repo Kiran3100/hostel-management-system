@@ -22,7 +22,8 @@ from app.adapters.otp.mock import MockOTPProvider
 from app.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-
+from app.exceptions import ValidationError, ConflictError, NotFoundError
+from app.models.user import UserRole
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
@@ -40,21 +41,49 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ):
     """Register a new user (Admin only - actual check done in service)."""
+    
+    # ADD THIS VALIDATION
+    if not request.email and not request.phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either email or phone is required"
+        )
+    
+    if not request.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is required"
+        )
+    
+    if request.role != UserRole.SUPER_ADMIN and not request.hostel_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Hostel code is required for non-admin users"
+        )
+    
     otp_provider = get_otp_provider()
     auth_service = AuthService(db, otp_provider)
 
-    user = await auth_service.register_user(
-        email=request.email,
-        phone=request.phone,
-        password=request.password,
-        role=request.role,
-        hostel_code=request.hostel_code,
-    )
+    try:
+        user = await auth_service.register_user(
+            email=request.email,
+            phone=request.phone,
+            password=request.password,
+            role=request.role,
+            hostel_code=request.hostel_code,
+        )
 
-    # ✅ SIMPLE FIX: Just cache the primary_hostel_id
-    user._cached_hostel_id = user.primary_hostel_id
+        # ✅ Cache the primary_hostel_id
+        user._cached_hostel_id = user.primary_hostel_id
 
-    return UserResponse.from_orm(user)
+        return UserResponse.from_orm(user)
+    
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/login", response_model=LoginResponse)

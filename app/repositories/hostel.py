@@ -3,7 +3,7 @@
 """Hostel repository - FIXED SOFT DELETE."""
 
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.models.hostel import Hostel
 from app.repositories.base import BaseRepository
@@ -23,10 +23,10 @@ class HostelRepository(BaseRepository[Hostel]):
         return result.scalar_one_or_none()
 
     async def get_by_code(self, code: str) -> Optional[Hostel]:
-        """Get hostel by code, excluding soft-deleted."""
+        """Get hostel by code (case-insensitive), excluding soft-deleted."""
         result = await self.db.execute(
             select(Hostel).where(
-                Hostel.code == code, 
+                func.upper(Hostel.code) == code.upper(),  # Case-insensitive
                 Hostel.is_deleted == False
             )
         )
