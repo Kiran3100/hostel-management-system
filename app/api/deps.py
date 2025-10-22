@@ -48,12 +48,17 @@ async def get_current_user(
     
     # CRITICAL FIX: Pre-compute hostel_id to avoid lazy loading in response serialization
     # This ensures the value is available without triggering database queries
-    if user.role.value == 'HOSTEL_ADMIN' and user.hostels:
-        # Cache the hostel_id value
-        user._cached_hostel_id = user.hostels[0].id if user.hostels else None
-    elif user.role.value in ['TENANT', 'VISITOR']:
+    if user.role.value in ['TENANT', 'VISITOR']:
+        # These roles use primary_hostel_id directly
         user._cached_hostel_id = user.primary_hostel_id
-    else:
+    elif user.role.value == 'HOSTEL_ADMIN':
+        # For hostel admin, hostels are already loaded via selectinload
+        # Access them safely since they're in the current session
+        if user.hostels:
+            user._cached_hostel_id = user.hostels[0].id
+        else:
+            user._cached_hostel_id = user.primary_hostel_id
+    else:  # SUPER_ADMIN
         user._cached_hostel_id = None
 
     return user

@@ -74,6 +74,7 @@ class AuthService:
                 raise ConflictError("Phone already registered")
 
         # Validate hostel for non-super-admin
+        hostel = None
         hostel_id = None
         if role != UserRole.SUPER_ADMIN:
             if not hostel_code:
@@ -97,12 +98,28 @@ class AuthService:
             "phone": phone,
             "password_hash": password_hash,
             "role": role,
-            "primary_hostel_id": hostel_id,
+            "primary_hostel_id": hostel_id,  # Set for all roles
             "is_verified": True if role == UserRole.SUPER_ADMIN else False,
         }
 
         user = await self.user_repo.create(user_data)
+        
+        # ✅ NEW: For HOSTEL_ADMIN, also add to association table
+        if role == UserRole.HOSTEL_ADMIN and hostel:
+            # Add to the many-to-many relationship
+            from sqlalchemy import insert
+            from app.models.associations import user_hostel_association
+            
+            stmt = insert(user_hostel_association).values(
+                user_id=user.id,
+                hostel_id=hostel.id
+            )
+            await self.db.execute(stmt)
+        
         await self.db.commit()
+        
+        # ✅ NEW: Refresh user to load relationships
+        await self.db.refresh(user)
 
         return user
 

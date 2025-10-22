@@ -51,7 +51,27 @@ async def register(
         hostel_code=request.hostel_code,
     )
 
-    return user
+    # ✅ FIX: Eagerly load hostels relationship for HOSTEL_ADMIN
+    if user.role == UserRole.HOSTEL_ADMIN:
+        from sqlalchemy.orm import selectinload
+        from sqlalchemy import select
+        
+        result = await db.execute(
+            select(User)
+            .where(User.id == user.id)
+            .options(selectinload(User.hostels))
+        )
+        user = result.scalar_one()
+    
+    # ✅ FIX: Pre-cache hostel_id to avoid lazy loading
+    if user.role == UserRole.HOSTEL_ADMIN and user.hostels:
+        user._cached_hostel_id = user.hostels[0].id if user.hostels else None
+    elif user.role in [UserRole.TENANT, UserRole.VISITOR]:
+        user._cached_hostel_id = user.primary_hostel_id
+    else:
+        user._cached_hostel_id = None
+
+    return UserResponse.from_orm(user)
 
 
 @router.post("/login", response_model=LoginResponse)
