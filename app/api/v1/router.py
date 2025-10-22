@@ -1,6 +1,6 @@
-# app/api/v1/router.py - UPDATE
+# app/api/v1/router.py - UPDATED WITH VISITOR ENDPOINTS
 
-"""Main API v1 router - UPDATED WITH USER ENDPOINTS."""
+"""Main API v1 router - UPDATED WITH VISITOR ENDPOINTS."""
 
 from fastapi import APIRouter
 
@@ -17,7 +17,9 @@ from app.api.v1 import (
     leaves,
     notifications,
     reports,
-    users, 
+    users,
+    visitor,  # ✅ NEW: Visitor public endpoints
+    admin_visitors,  # ✅ NEW: Admin visitor management
 )
 
 api_router = APIRouter()
@@ -27,7 +29,7 @@ api_router.include_router(auth.router)
 api_router.include_router(hostels.router)
 api_router.include_router(rooms.router)
 api_router.include_router(tenants.router)
-api_router.include_router(users.router)  
+api_router.include_router(users.router)
 api_router.include_router(subscriptions.router)
 api_router.include_router(payments.router)
 api_router.include_router(complaints.router)
@@ -36,3 +38,7 @@ api_router.include_router(mess.router)
 api_router.include_router(leaves.router)
 api_router.include_router(notifications.router)
 api_router.include_router(reports.router)
+
+# ✅ NEW: Visitor endpoints
+api_router.include_router(visitor.router)
+api_router.include_router(admin_visitors.router)

@@ -22,19 +22,30 @@ setup_logging()
 logger = get_logger(__name__)
 
 
+from contextlib import asynccontextmanager
+from app.tasks.visitor_tasks import schedule_visitor_tasks
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup and shutdown events."""
+    """Lifespan context manager."""
     # Startup
     logger.info("Starting application...")
     await init_db()
     await rate_limiter.init()
-    logger.info("Application started successfully")
-
+    
+    # NEW: Schedule visitor tasks
+    scheduler = schedule_visitor_tasks()
+    logger.info("Background tasks scheduled")
+    
     yield
-
+    
     # Shutdown
     logger.info("Shutting down application...")
+    
+    # NEW: Shutdown scheduler
+    if scheduler:
+        scheduler.shutdown()
+    
     await close_db()
     await rate_limiter.close()
     logger.info("Application shut down successfully")

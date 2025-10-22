@@ -1,4 +1,4 @@
-"""User and authentication models."""
+"""User and authentication models - UPDATED WITH VISITOR ROLE."""
 
 from datetime import datetime
 from enum import Enum as PyEnum
@@ -18,6 +18,7 @@ class UserRole(str, PyEnum):
     SUPER_ADMIN = "SUPER_ADMIN"
     HOSTEL_ADMIN = "HOSTEL_ADMIN"
     TENANT = "TENANT"
+    VISITOR = "VISITOR"  # ✅ NEW: Read-only access role
 
 
 class User(Base, TimestampMixin, SoftDeleteMixin):
@@ -32,12 +33,18 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
     
-    # For tenants only - they belong to one hostel
+    # For tenants and visitors - they belong to one hostel
     primary_hostel_id: Mapped[Optional[int]] = mapped_column(ForeignKey("hostels.id"), nullable=True)
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # ✅ NEW: Visitor-specific fields
+    visitor_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, 
+        comment="Expiration time for visitor accounts"
+    )
     
     # Relationships
     hostels: Mapped[List["Hostel"]] = relationship(
@@ -73,14 +80,13 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     def hostel_id(self) -> Optional[int]:
         """
         Get hostel_id for the user - backward compatibility property.
-        - For TENANT: returns primary_hostel_id
+        - For TENANT/VISITOR: returns primary_hostel_id
         - For HOSTEL_ADMIN: returns first hostel from association
         - For SUPER_ADMIN: returns None
         """
-        if self.role == UserRole.TENANT:
+        if self.role in [UserRole.TENANT, UserRole.VISITOR]:
             return self.primary_hostel_id
         elif self.role == UserRole.HOSTEL_ADMIN:
-            # Return first associated hostel ID if available
             return self.hostels[0].id if self.hostels else None
         else:  # SUPER_ADMIN
             return None
@@ -89,10 +95,18 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         """Get list of hostel IDs this user has access to."""
         if self.role == UserRole.SUPER_ADMIN:
             return []  # Super admin has access to all
-        elif self.role == UserRole.TENANT:
+        elif self.role in [UserRole.TENANT, UserRole.VISITOR]:
             return [self.primary_hostel_id] if self.primary_hostel_id else []
         else:  # HOSTEL_ADMIN
             return [h.id for h in self.hostels]
+    
+    def is_visitor_expired(self) -> bool:
+        """Check if visitor account has expired."""
+        if self.role != UserRole.VISITOR:
+            return False
+        if not self.visitor_expires_at:
+            return False
+        return datetime.utcnow() > self.visitor_expires_at
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email}, role={self.role})>"
