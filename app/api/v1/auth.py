@@ -42,7 +42,7 @@ async def register(
 ):
     """Register a new user (Admin only - actual check done in service)."""
     
-    # ADD THIS VALIDATION
+    # Validation
     if not request.email and not request.phone:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -65,7 +65,8 @@ async def register(
     auth_service = AuthService(db, otp_provider)
 
     try:
-        user = await auth_service.register_user(
+        # Get user data as dict from service
+        user_data = await auth_service.register_user(
             email=request.email,
             phone=request.phone,
             password=request.password,
@@ -73,10 +74,8 @@ async def register(
             hostel_code=request.hostel_code,
         )
 
-        # ✅ Cache the primary_hostel_id
-        user._cached_hostel_id = user.primary_hostel_id
-
-        return UserResponse.from_orm(user)
+        # Return UserResponse created from dict
+        return UserResponse(**user_data)
     
     except ConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -84,6 +83,12 @@ async def register(
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Registration error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred during registration"
 
 
 @router.post("/login", response_model=LoginResponse)
