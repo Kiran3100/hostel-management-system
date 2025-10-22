@@ -1,4 +1,4 @@
-"""User schemas."""
+"""User schemas - FIXED LAZY LOADING."""
 
 from typing import Optional, List
 from datetime import datetime
@@ -32,7 +32,7 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """User response schema."""
+    """User response schema - FIXED LAZY LOADING."""
     model_config = ConfigDict(from_attributes=True)
     
     id: int
@@ -61,12 +61,28 @@ class UserResponse(BaseModel):
             'updated_at': user.updated_at,
         }
         
-        # Map primary_hostel_id to hostel_id
-        if user.role == UserRole.TENANT:
+        # CRITICAL FIX: Check for cached value first to avoid lazy loading
+        if hasattr(user, '_cached_hostel_id'):
+            data['hostel_id'] = user._cached_hostel_id
+        # Map primary_hostel_id to hostel_id (for roles with primary_hostel_id)
+        elif user.role.value in ['TENANT', 'VISITOR']:
             data['hostel_id'] = user.primary_hostel_id
-        elif user.role == UserRole.HOSTEL_ADMIN and user.hostels:
-            # For hostel admin, use first hostel in the list
-            data['hostel_id'] = user.hostels[0].id if user.hostels else None
+        # For HOSTEL_ADMIN, try to get from loaded hostels list
+        elif user.role.value == 'HOSTEL_ADMIN':
+            # Only access hostels if they're already loaded (avoid lazy loading)
+            try:
+                # Check if hostels relationship is loaded
+                from sqlalchemy.inspect import inspect
+                insp = inspect(user)
+                if 'hostels' in insp.unloaded:
+                    # Not loaded, use primary_hostel_id as fallback
+                    data['hostel_id'] = user.primary_hostel_id
+                else:
+                    # Already loaded, safe to access
+                    data['hostel_id'] = user.hostels[0].id if user.hostels else None
+            except:
+                # Fallback to primary_hostel_id
+                data['hostel_id'] = user.primary_hostel_id
         else:
             data['hostel_id'] = None
             

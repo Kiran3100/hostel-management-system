@@ -1,4 +1,4 @@
-"""Shared API dependencies."""
+"""Shared API dependencies - FIXED LAZY LOADING."""
 
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
@@ -31,14 +31,12 @@ async def get_current_user(
             detail="Invalid authentication credentials",
         )
 
-    user_repo = UserRepository(User, db)
-    
-    # Eagerly load hostels relationship for admins
+    # Eagerly load relationships to avoid lazy loading issues
     from sqlalchemy import select
     result = await db.execute(
         select(User)
         .options(selectinload(User.hostels))
-        .where(User.id == user_id)
+        .where(User.id == user_id, User.is_deleted == False)
     )
     user = result.scalar_one_or_none()
 
@@ -47,6 +45,16 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    
+    # CRITICAL FIX: Pre-compute hostel_id to avoid lazy loading in response serialization
+    # This ensures the value is available without triggering database queries
+    if user.role.value == 'HOSTEL_ADMIN' and user.hostels:
+        # Cache the hostel_id value
+        user._cached_hostel_id = user.hostels[0].id if user.hostels else None
+    elif user.role.value in ['TENANT', 'VISITOR']:
+        user._cached_hostel_id = user.primary_hostel_id
+    else:
+        user._cached_hostel_id = None
 
     return user
 
