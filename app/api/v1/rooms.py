@@ -84,28 +84,27 @@ async def create_room(
             )
         hostel_id = request.hostel_id
     else:  # Hostel admin
-        # For hostel admin with multiple hostels, hostel_id must be provided in request
-        if not request.hostel_id:
-            raise HTTPException(
-                status_code=400,
-                detail="hostel_id must be specified in request body for Hostel Admin managing multiple hostels"
-            )
-        hostel_id = request.hostel_id
+        # ✅ FIX: If hostel_id provided, verify access; otherwise use first hostel
+        if request.hostel_id:
+            hostel_id = request.hostel_id
+            # Verify this hostel admin has access to this hostel
+            hostel_ids = current_user.get_hostel_ids()
+            if hostel_id not in hostel_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have access to this hostel"
+                )
+        else:
+            # Use first associated hostel
+            hostel_ids = current_user.get_hostel_ids()
+            if not hostel_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No hostels associated with your account"
+                )
+            hostel_id = hostel_ids[0]
 
-        # Optional: Verify that hostel_id is in current_user's assigned hostels
-        # This requires the current_user.hostels (list) schema update if multiple hostels supported
-        # Example check Hostels validation function (not provided here):
-        # if hostel_id not in current_user.assigned_hostels:
-        #     raise HTTPException(status_code=403, detail="Access to this hostel is forbidden")
-
-    if hostel_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"hostel_id cannot be null. User role: {current_user.role}, User hostel_id: {getattr(current_user, 'hostel_id', None)}"
-        )
-
-    check_hostel_access(current_user, hostel_id)
-
+    # Continue with validation...
     subscription_service = SubscriptionService(db)
     await subscription_service.check_room_limit(hostel_id)
 

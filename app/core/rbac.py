@@ -121,7 +121,15 @@ def check_hostel_access(user: User, hostel_id: int) -> None:
     if user.role == UserRole.VISITOR and user.is_visitor_expired():
         raise AuthorizationError("Visitor account has expired.")
     
-    if user.hostel_id != hostel_id:
+    # ✅ FIX: For Hostel Admins, check all associated hostels
+    if user.role == UserRole.HOSTEL_ADMIN:
+        hostel_ids = user.get_hostel_ids()
+        if hostel_id not in hostel_ids:
+            raise AuthorizationError("Access denied. You don't have access to this hostel.")
+        return
+    
+    # For Tenants and Visitors, check primary_hostel_id
+    if user.primary_hostel_id != hostel_id:
         raise AuthorizationError("Access denied. You don't have access to this hostel.")
 
 
