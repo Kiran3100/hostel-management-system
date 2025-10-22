@@ -97,7 +97,7 @@ class ResendVerificationRequest(BaseModel):
 
 # ===== ROUTER =====
 
-router = APIRouter(prefix="/auth/register", tags=["Self-Registration"])
+router = APIRouter(prefix="/auth/register", tags=["Visitors"])
 
 
 def get_otp_provider():
