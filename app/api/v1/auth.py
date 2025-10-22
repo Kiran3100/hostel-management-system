@@ -89,6 +89,7 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred during registration"
+        )
 
 
 @router.post("/login", response_model=LoginResponse)
