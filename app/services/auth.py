@@ -1,9 +1,10 @@
-"""Authentication service."""
+"""Authentication service - FIXED VERSION."""
 
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.security import (
     hash_password,
@@ -26,10 +27,7 @@ from app.exceptions import (
 from app.models.user import User, UserRole, RefreshToken, OTPCode
 from app.repositories.user import UserRepository, RefreshTokenRepository, OTPRepository
 from app.repositories.hostel import HostelRepository
-from app.schemas.auth import LoginResponse
 from app.adapters.otp.base import OTPProvider
-from typing import Optional, Dict, Any
-from sqlalchemy import select
 
 
 class AuthService:
@@ -91,11 +89,11 @@ class AuthService:
                 raise NotFoundError(f"Hostel with code {hostel_code} not found")
             hostel_id = hostel.id
         
-        # Create new user - FIXED: Use 'password' instead of 'hashed_password'
+        # ✅ FIXED: Create new user with correct field name 'password_hash'
         new_user = User(
             email=email,
             phone=phone,
-            password=hash_password(password),  # ✅ Changed from hashed_password to password
+            password_hash=hash_password(password),  # ✅ CORRECT: use password_hash
             role=role,
             primary_hostel_id=hostel_id,
             is_active=True,
@@ -114,6 +112,7 @@ class AuthService:
             "role": new_user.role,
             "primary_hostel_id": new_user.primary_hostel_id,
             "is_active": new_user.is_active,
+            "is_verified": new_user.is_verified,
             "created_at": new_user.created_at,
             "updated_at": new_user.updated_at
         }
@@ -145,8 +144,8 @@ class AuthService:
         if not user:
             return None
         
-        # FIXED: Use user.password instead of user.hashed_password
-        if not verify_password(password, user.password):  # ✅
+        # ✅ FIXED: Use user.password_hash (correct field name)
+        if not verify_password(password, user.password_hash):
             return None
         
         return {

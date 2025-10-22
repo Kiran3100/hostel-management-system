@@ -20,13 +20,17 @@ from app.api.v1 import (
     users,
     visitor,  
     self_registration,
+    multi_hostel,
 )
+
+
 
 api_router = APIRouter()
 
 # Include all routers
 api_router.include_router(auth.router)
 api_router.include_router(hostels.router)
+api_router.include_router(multi_hostel.router)
 api_router.include_router(rooms.router)
 api_router.include_router(tenants.router)
 api_router.include_router(subscriptions.router)

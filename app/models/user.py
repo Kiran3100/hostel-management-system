@@ -39,6 +39,10 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    admin_code: Mapped[Optional[str]] = mapped_column(
+    String(50), unique=True, nullable=True,
+    comment="Unique code for hostel admins to register new hostels"
+    )
     
     # ✅ NEW: Visitor-specific fields
     visitor_expires_at: Mapped[Optional[datetime]] = mapped_column(
