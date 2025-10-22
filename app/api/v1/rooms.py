@@ -74,25 +74,34 @@ async def create_room(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new room."""
+
+    # Determine hostel_id based on role and request
     if current_user.role == UserRole.SUPER_ADMIN:
         if not request.hostel_id:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="hostel_id is required for Super Admin to create rooms"
             )
         hostel_id = request.hostel_id
-    else:
-        if not current_user.hostel_id:
+    else:  # Hostel admin
+        # For hostel admin with multiple hostels, hostel_id must be provided in request
+        if not request.hostel_id:
             raise HTTPException(
                 status_code=400,
-                detail=f"User does not have an associated hostel. User ID: {current_user.id}, Role: {current_user.role}"
+                detail="hostel_id must be specified in request body for Hostel Admin managing multiple hostels"
             )
-        hostel_id = current_user.hostel_id
+        hostel_id = request.hostel_id
+
+        # Optional: Verify that hostel_id is in current_user's assigned hostels
+        # This requires the current_user.hostels (list) schema update if multiple hostels supported
+        # Example check Hostels validation function (not provided here):
+        # if hostel_id not in current_user.assigned_hostels:
+        #     raise HTTPException(status_code=403, detail="Access to this hostel is forbidden")
 
     if hostel_id is None:
         raise HTTPException(
             status_code=400,
-            detail=f"hostel_id cannot be null. User role: {current_user.role}, User hostel_id: {current_user.hostel_id}"
+            detail=f"hostel_id cannot be null. User role: {current_user.role}, User hostel_id: {getattr(current_user, 'hostel_id', None)}"
         )
 
     check_hostel_access(current_user, hostel_id)
@@ -101,7 +110,6 @@ async def create_room(
     await subscription_service.check_room_limit(hostel_id)
 
     room_repo = RoomRepository(Room, db)
-
     existing = await room_repo.get_by_number(hostel_id, request.number)
     if existing:
         raise HTTPException(status_code=409, detail="Room number already exists in this hostel")
@@ -113,14 +121,13 @@ async def create_room(
         "room_type": request.room_type,
         "capacity": request.capacity,
     }
-    
     if request.description:
         room_data["description"] = request.description
 
     room = await room_repo.create(room_data)
     await db.commit()
-
     return room
+
 
 
 @router.patch("/rooms/{room_id}", response_model=RoomResponse)

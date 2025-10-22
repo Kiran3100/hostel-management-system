@@ -48,173 +48,6 @@ class AuthService:
         self.hostel_repo = HostelRepository(Hostel, db)
         
         self.otp_provider = otp_provider
-    async def self_register_visitor(
-        self,
-        email: str,
-        password: str,
-        hostel_code: str,
-        full_name: Optional[str] = None,
-    ):
-        """
-        Self-registration for visitors.
-        
-        Args:
-            email: Visitor email
-            password: Password (will be validated)
-            hostel_code: Hostel code to get access to
-            full_name: Optional full name
-        
-        Returns:
-            Created visitor user
-        """
-        # Validate email uniqueness
-        existing = await self.user_repo.get_by_email(email)
-        if existing:
-            raise ConflictError("Email already registered")
-
-        # Validate password strength
-        self._validate_password_strength(password)
-
-        # Verify hostel exists and is active
-        hostel = await self.hostel_repo.get_by_code(hostel_code)
-        if not hostel or not hostel.is_active:
-            raise NotFoundError("Invalid or inactive hostel code")
-
-        # Hash password
-        password_hash = hash_password(password)
-
-        # Calculate default expiration (30 days)
-        expires_at = datetime.utcnow() + timedelta(days=30)
-
-        # Create visitor user
-        user_data = {
-            "email": email,
-            "password_hash": password_hash,
-            "role": UserRole.VISITOR,
-            "primary_hostel_id": hostel.id,
-            "is_verified": False,  # Will be verified via email
-            "is_active": True,
-            "visitor_expires_at": expires_at,
-        }
-
-        user = await self.user_repo.create(user_data)
-        await self.db.commit()
-
-        # Send verification email (if email service configured)
-        try:
-            await self._send_verification_email(user.id, email, hostel.name)
-        except Exception as e:
-            # Log error but don't fail registration
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to send verification email: {str(e)}")
-
-        # Send welcome email
-        try:
-            await self._send_welcome_email(email, full_name or email, hostel.name, expires_at)
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to send welcome email: {str(e)}")
-
-        return user
-
-    def _validate_password_strength(self, password: str) -> None:
-        """
-        Validate password meets strength requirements.
-        
-        Requirements:
-        - Min 8 characters
-        - At least 1 uppercase letter
-        - At least 1 lowercase letter
-        - At least 1 number
-        """
-        if len(password) < 8:
-            raise ValidationError("Password must be at least 8 characters long")
-
-        if not any(c.isupper() for c in password):
-            raise ValidationError("Password must contain at least one uppercase letter")
-
-        if not any(c.islower() for c in password):
-            raise ValidationError("Password must contain at least one lowercase letter")
-
-        if not any(c.isdigit() for c in password):
-            raise ValidationError("Password must contain at least one number")
-
-    async def _send_verification_email(self, user_id: int, email: str, hostel_name: str) -> None:
-        """Send email verification link."""
-        # Generate verification token (24-hour expiry)
-        verification_token = create_access_token(
-            {"sub": str(user_id), "type": "email_verification"},
-            expires_delta=timedelta(hours=24)
-        )
-
-        # Create verification URL
-        from app.config import settings
-        # In production, use actual frontend URL
-        verification_url = f"http://localhost:3000/verify-email?token={verification_token}"
-
-        # TODO: Send email via notification provider
-        # For now, just log it
-        print(f"\n{'='*60}")
-        print(f"EMAIL VERIFICATION")
-        print(f"{'='*60}")
-        print(f"To: {email}")
-        print(f"Subject: Verify your {hostel_name} visitor account")
-        print(f"Link: {verification_url}")
-        print(f"{'='*60}\n")
-
-    async def _send_welcome_email(
-        self, 
-        email: str, 
-        name: str, 
-        hostel_name: str,
-        expires_at: datetime
-    ) -> None:
-        """Send welcome email to new visitor."""
-        print(f"\n{'='*60}")
-        print(f"WELCOME EMAIL")
-        print(f"{'='*60}")
-        print(f"To: {email}")
-        print(f"Subject: Welcome to {hostel_name}!")
-        print(f"")
-        print(f"Hello {name},")
-        print(f"")
-        print(f"Welcome to {hostel_name} visitor portal!")
-        print(f"")
-        print(f"Your account has been created successfully.")
-        print(f"Access expires: {expires_at.strftime('%Y-%m-%d %H:%M')}")
-        print(f"")
-        print(f"Next steps:")
-        print(f"1. Verify your email address")
-        print(f"2. Login to explore hostel information")
-        print(f"3. View notices, mess menus, and more")
-        print(f"")
-        print(f"{'='*60}\n")
-
-    async def verify_email(self, token: str):
-        """Verify user email with token."""
-        try:
-            payload = decode_token(token)
-            if payload.get("type") != "email_verification":
-                raise AuthenticationError("Invalid verification token")
-
-            user_id = int(payload.get("sub"))
-        except Exception:
-            raise AuthenticationError("Invalid or expired verification token")
-
-        user = await self.user_repo.get(user_id)
-        if not user:
-            raise NotFoundError("User not found")
-
-        if user.is_verified:
-            raise ValidationError("Email already verified")
-
-        # Mark as verified
-        await self.user_repo.update(user_id, {"is_verified": True})
-        await self.db.commit()
-
-        return user
 
     async def register_user(
         self,
@@ -222,9 +55,9 @@ class AuthService:
         phone: Optional[str],
         password: Optional[str],
         role: UserRole,
-        hostel_id: Optional[int] = None,
+        hostel_code: Optional[str] = None,
     ) -> User:
-        """Register a new user."""
+        """Register a new user using hostel code."""
         # Validate at least one contact method
         if not email and not phone:
             raise ValidationError("Either email or phone is required")
@@ -241,13 +74,19 @@ class AuthService:
                 raise ConflictError("Phone already registered")
 
         # Validate hostel for non-super-admin
+        hostel_id = None
         if role != UserRole.SUPER_ADMIN:
-            if not hostel_id:
-                raise ValidationError("Hostel ID required for non-admin users")
+            if not hostel_code:
+                raise ValidationError("Hostel code required for non-admin users")
 
-            hostel = await self.hostel_repo.get(hostel_id)
+            hostel = await self.hostel_repo.get_by_code(hostel_code)
             if not hostel:
-                raise NotFoundError("Hostel not found")
+                raise NotFoundError(f"Hostel with code '{hostel_code}' not found")
+            
+            if not hostel.is_active:
+                raise ValidationError(f"Hostel '{hostel.name}' is not active")
+            
+            hostel_id = hostel.id
 
         # Hash password if provided
         password_hash = hash_password(password) if password else None

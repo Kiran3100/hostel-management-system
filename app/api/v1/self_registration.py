@@ -25,7 +25,7 @@ class VisitorSelfRegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
     confirm_password: str = Field(..., min_length=8)
-    hostel_code: str = Field(..., min_length=3, max_length=50)
+    hostel_code: str = Field(..., min_length=3, max_length=50, description="Hostel code (not ID)")
     full_name: Optional[str] = Field(None, max_length=100)
     accept_terms: bool = Field(..., description="Must accept terms and conditions")
     
@@ -70,6 +70,7 @@ class VisitorSelfRegisterResponse(BaseModel):
     message: str
     email: str
     hostel_name: str
+    hostel_code: str
     expires_at: str
     verification_required: bool = True
     next_steps: list[str]
@@ -93,6 +94,15 @@ class ResendVerificationRequest(BaseModel):
     """Resend verification email request."""
     
     email: EmailStr
+
+
+class HostelListResponse(BaseModel):
+    """Hostel information for registration."""
+    
+    name: str
+    code: str
+    city: Optional[str] = None
+    state: Optional[str] = None
 
 
 # ===== ROUTER =====
@@ -134,7 +144,7 @@ async def self_register_visitor(
     - Special characters recommended
     
     **Process:**
-    1. User submits registration form
+    1. User submits registration form with hostel code
     2. System validates email, password, and hostel code
     3. Creates visitor account (inactive until verified)
     4. Sends verification email
@@ -149,15 +159,15 @@ async def self_register_visitor(
     auth_service = AuthService(db, otp_provider)
     
     try:
-        # Create visitor account
+        # Create visitor account using hostel_code
         user = await auth_service.self_register_visitor(
             email=request.email,
             password=request.password,
-            hostel_code=request.hostel_code,
+            hostel_code=request.hostel_code,  # Using hostel_code instead of hostel_id
             full_name=request.full_name,
         )
         
-        # Get hostel name for response
+        # Get hostel details for response
         from app.repositories.hostel import HostelRepository
         from app.models.hostel import Hostel
         
@@ -168,6 +178,7 @@ async def self_register_visitor(
             message="Registration successful! Please check your email to verify your account.",
             email=user.email,
             hostel_name=hostel.name if hostel else "Unknown",
+            hostel_code=hostel.code if hostel else request.hostel_code,
             expires_at=user.visitor_expires_at.isoformat() if user.visitor_expires_at else "",
             verification_required=True,
             next_steps=[
@@ -295,7 +306,7 @@ async def resend_verification_email(
         }
 
 
-@router.get("/hostels")
+@router.get("/hostels", response_model=list[HostelListResponse])
 async def list_available_hostels(
     db: AsyncSession = Depends(get_db),
 ):
@@ -307,6 +318,8 @@ async def list_available_hostels(
     **Use Case:**
     - Help users find their hostel code
     - Show active hostels accepting visitor registrations
+    
+    **Returns:** List of active hostels with their codes
     """
     from app.repositories.hostel import HostelRepository
     from app.models.hostel import Hostel
@@ -314,14 +327,12 @@ async def list_available_hostels(
     hostel_repo = HostelRepository(Hostel, db)
     hostels = await hostel_repo.get_active_hostels()
     
-    return {
-        "hostels": [
-            {
-                "name": h.name,
-                "code": h.code,
-                "city": h.city,
-                "state": h.state,
-            }
-            for h in hostels
-        ]
-    }
+    return [
+        HostelListResponse(
+            name=h.name,
+            code=h.code,
+            city=h.city,
+            state=h.state,
+        )
+        for h in hostels
+    ]

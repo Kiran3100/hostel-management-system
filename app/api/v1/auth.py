@@ -48,7 +48,7 @@ async def register(
         phone=request.phone,
         password=request.password,
         role=request.role,
-        hostel_id=request.hostel_id,
+        hostel_code=request.hostel_code,
     )
 
     return user

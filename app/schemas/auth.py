@@ -50,7 +50,7 @@ class RegisterRequest(BaseModel):
     phone: Optional[str] = Field(None, pattern=r"^\+?[1-9]\d{1,14}$")
     password: Optional[str] = Field(None, min_length=8)
     role: UserRole
-    hostel_id: Optional[int] = None
+    hostel_code: Optional[str] = None
     
     @field_validator("email", "phone")
     @classmethod

@@ -32,10 +32,10 @@ POST /auth/register
 ```json
 {
   "email": "admin@hostel.com",
-  "phone": "+919876543210",
+  "phone": "919876543210",
   "password": "SecurePass123",
   "role": "HOSTEL_ADMIN",
-  "hostel_id": 1
+  "hostel_code": "HOSTELLUXURY"
 }
 ```
 
@@ -46,7 +46,7 @@ POST /auth/register
   "email": "admin@hostel.com",
   "phone": "+919876543210",
   "role": "HOSTEL_ADMIN",
-  "hostel_id": 1,
+  "hostel_code": "HOSTELLUXURY",
   "is_active": true,
   "is_verified": true,
   "created_at": "2025-01-15T10:30:00Z"

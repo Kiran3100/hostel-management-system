@@ -18,8 +18,7 @@ from app.api.v1 import (
     notifications,
     reports,
     users,
-    visitor,  # ✅ NEW: Visitor public endpoints
-    admin_visitors,  # ✅ NEW: Admin visitor management
+    visitor,  
     self_registration,
 )
 
@@ -30,7 +29,6 @@ api_router.include_router(auth.router)
 api_router.include_router(hostels.router)
 api_router.include_router(rooms.router)
 api_router.include_router(tenants.router)
-api_router.include_router(users.router)
 api_router.include_router(subscriptions.router)
 api_router.include_router(payments.router)
 api_router.include_router(complaints.router)
@@ -44,3 +42,4 @@ api_router.include_router(self_registration.router)
 # ✅ NEW: Visitor endpoints
 # api_router.include_router(visitor.router)
 # api_router.include_router(admin_visitors.router)
+# api_router.include_router(users.router)
