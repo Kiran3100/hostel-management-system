@@ -56,7 +56,7 @@ class Settings(BaseSettings):
         return v
 
     # Rate Limiting
-    rate_limit_enabled: bool = True
+    rate_limit_enabled: bool = False
     rate_limit_per_minute: int = 60
 
     # Payment

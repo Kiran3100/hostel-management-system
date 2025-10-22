@@ -42,5 +42,5 @@ api_router.include_router(reports.router)
 api_router.include_router(self_registration.router)
 
 # ✅ NEW: Visitor endpoints
-api_router.include_router(visitor.router)
-api_router.include_router(admin_visitors.router)
+# api_router.include_router(visitor.router)
+# api_router.include_router(admin_visitors.router)
