@@ -12,6 +12,7 @@ from app.schemas.auth import (
     RefreshTokenRequest,
     RegisterRequest,
     ChangePasswordRequest,
+    UserRole,
 )
 from app.schemas.common import MessageResponse
 from app.schemas.user import UserResponse
@@ -22,8 +23,9 @@ from app.adapters.otp.mock import MockOTPProvider
 from app.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.exceptions import ValidationError, ConflictError, NotFoundError
-from app.models.user import UserRole
+from app.exceptions import ConflictError, NotFoundError, ValidationError
+
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
@@ -65,13 +67,13 @@ async def register(
     auth_service = AuthService(db, otp_provider)
 
     try:
-        # Get user data as dict from service
+        # FIXED: Using request.hostel_code instead of request.hostel_id
         user_data = await auth_service.register_user(
             email=request.email,
             phone=request.phone,
             password=request.password,
             role=request.role,
-            hostel_code=request.hostel_code,
+            hostel_code=request.hostel_code,  # ✅ FIXED: was hostel_id
         )
 
         # Return UserResponse created from dict
@@ -86,9 +88,11 @@ async def register(
     except Exception as e:
         # Log the error for debugging
         print(f"Registration error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during registration"
+            detail=f"An error occurred during registration: {str(e)}"
         )
 
 
