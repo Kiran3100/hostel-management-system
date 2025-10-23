@@ -1,8 +1,8 @@
-# app/api/v1/rooms.py
+# app/api/v1/rooms.py - COMPLETE FIX
 
-"""Room and bed endpoints - FIXED SOFT DELETE."""
+"""Room and bed endpoints - ALL ISSUES FIXED."""
 
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,19 +27,37 @@ from app.services.subscription import SubscriptionService
 router = APIRouter(tags=["Rooms & Beds"])
 
 
-# Room endpoints
+# ===== ROOM ENDPOINTS =====
+
 @router.get("/rooms", response_model=List[RoomResponse])
 async def list_rooms(
-    hostel_id: int = None,
+    hostel_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List rooms."""
+    """
+    List rooms in a hostel.
+    
+    **Query Parameters:**
+    - `hostel_id`: Filter by hostel (required for Super Admin, optional for others)
+    
+    **Returns:** List of rooms (excluding soft-deleted)
+    """
+    # Determine hostel scope
     if current_user.role == UserRole.SUPER_ADMIN:
         if not hostel_id:
-            raise HTTPException(status_code=400, detail="hostel_id required for Super Admin")
+            raise HTTPException(
+                status_code=400, 
+                detail="hostel_id required for Super Admin"
+            )
     else:
-        hostel_id = current_user.hostel_id
+        # ✅ FIX: Use primary_hostel_id to avoid lazy loading
+        hostel_id = hostel_id or current_user.primary_hostel_id
+        if not hostel_id:
+            raise HTTPException(
+                status_code=400,
+                detail="hostel_id required"
+            )
 
     check_hostel_access(current_user, hostel_id)
 
@@ -73,21 +91,37 @@ async def create_room(
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new room."""
-
-    # Determine hostel_id based on role and request
+    """
+    Create a new room.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    
+    **Body:**
+    - `hostel_id`: Required for Super Admin, optional for Hostel Admin
+    - `number`: Room number (unique per hostel)
+    - `floor`: Floor number
+    - `room_type`: SINGLE, DOUBLE, TRIPLE, DORMITORY
+    - `capacity`: Number of beds
+    - `description`: Optional description
+    
+    **Note:** Hostel Admin can only create rooms in their assigned hostels
+    """
+    # ✅ FIX: Properly determine hostel_id
+    hostel_id = None
+    
     if current_user.role == UserRole.SUPER_ADMIN:
+        # Super admin must provide hostel_id
         if not request.hostel_id:
             raise HTTPException(
                 status_code=400,
-                detail="hostel_id is required for Super Admin to create rooms"
+                detail="hostel_id is required for Super Admin"
             )
         hostel_id = request.hostel_id
-    else:  # Hostel admin
-        # ✅ FIX: If hostel_id provided, verify access; otherwise use first hostel
+        
+    else:  # HOSTEL_ADMIN
+        # If hostel_id provided, verify access
         if request.hostel_id:
             hostel_id = request.hostel_id
-            # Verify this hostel admin has access to this hostel
             hostel_ids = current_user.get_hostel_ids()
             if hostel_id not in hostel_ids:
                 raise HTTPException(
@@ -104,15 +138,20 @@ async def create_room(
                 )
             hostel_id = hostel_ids[0]
 
-    # Continue with validation...
+    # Check subscription limits
     subscription_service = SubscriptionService(db)
     await subscription_service.check_room_limit(hostel_id)
 
+    # Check for duplicate room number
     room_repo = RoomRepository(Room, db)
     existing = await room_repo.get_by_number(hostel_id, request.number)
     if existing:
-        raise HTTPException(status_code=409, detail="Room number already exists in this hostel")
+        raise HTTPException(
+            status_code=409, 
+            detail=f"Room number '{request.number}' already exists in this hostel"
+        )
 
+    # Create room
     room_data = {
         "hostel_id": hostel_id,
         "number": request.number,
@@ -125,8 +164,11 @@ async def create_room(
 
     room = await room_repo.create(room_data)
     await db.commit()
+    
+    # ✅ FIX: Refresh to get all fields
+    await db.refresh(room)
+    
     return room
-
 
 
 @router.patch("/rooms/{room_id}", response_model=RoomResponse)
@@ -136,7 +178,13 @@ async def update_room(
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update room."""
+    """
+    Update room details.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    
+    **Note:** Only provided fields will be updated
+    """
     room_repo = RoomRepository(Room, db)
 
     room = await room_repo.get(room_id)
@@ -145,22 +193,40 @@ async def update_room(
 
     check_hostel_access(current_user, room.hostel_id)
 
+    # Check for duplicate room number if changing number
     update_data = request.model_dump(exclude_unset=True)
+    if "number" in update_data and update_data["number"] != room.number:
+        existing = await room_repo.get_by_number(room.hostel_id, update_data["number"])
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Room number '{update_data['number']}' already exists"
+            )
+
     room = await room_repo.update(room_id, update_data)
     await db.commit()
+    
+    # ✅ FIX: Refresh to get updated fields
+    await db.refresh(room)
 
     return room
 
 
-# ✅ FIXED: Changed from hard delete to soft delete
 @router.delete("/rooms/{room_id}", response_model=MessageResponse)
 async def delete_room(
     room_id: int,
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft delete room."""
+    """
+    Soft delete room.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    
+    **Note:** Cannot delete rooms with occupied beds
+    """
     room_repo = RoomRepository(Room, db)
+    bed_repo = BedRepository(Bed, db)
 
     room = await room_repo.get(room_id)
     if not room:
@@ -168,21 +234,33 @@ async def delete_room(
 
     check_hostel_access(current_user, room.hostel_id)
 
-    # ✅ CHANGED: Use soft_delete instead of delete
+    # Check if room has occupied beds
+    beds = await bed_repo.get_by_room(room_id)
+    occupied_beds = [bed for bed in beds if bed.is_occupied]
+    
+    if occupied_beds:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete room with {len(occupied_beds)} occupied bed(s). Please vacate all beds first."
+        )
+
     await room_repo.soft_delete(room_id)
     await db.commit()
 
     return MessageResponse(message="Room deleted successfully")
 
 
-# ✅ NEW: Restore endpoint for soft-deleted rooms
 @router.post("/rooms/{room_id}/restore", response_model=RoomResponse)
 async def restore_room(
     room_id: int,
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore a soft-deleted room."""
+    """
+    Restore a soft-deleted room.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    """
     from sqlalchemy import select
     
     # Query without soft-delete filter
@@ -206,38 +284,76 @@ async def restore_room(
         "deleted_at": None
     })
     await db.commit()
+    
+    # ✅ FIX: Refresh to get updated state
     await db.refresh(room)
     
     return room
 
 
-# Bed endpoints
+# ===== BED ENDPOINTS =====
+
 @router.get("/beds", response_model=List[BedResponse])
 async def list_beds(
-    room_id: int = None,
-    hostel_id: int = None,
+    room_id: Optional[int] = None,
+    hostel_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List beds."""
+    """
+    List beds.
+    
+    **Query Parameters:**
+    - `room_id`: Filter by room
+    - `hostel_id`: Filter by hostel
+    
+    **Note:** At least one filter is required
+    """
     bed_repo = BedRepository(Bed, db)
 
     if room_id:
         beds = await bed_repo.get_by_room(room_id)
         if beds and beds[0].hostel_id:
             check_hostel_access(current_user, beds[0].hostel_id)
+            
     elif hostel_id:
         check_hostel_access(current_user, hostel_id)
-        beds = await bed_repo.get_multi(filters={"hostel_id": hostel_id, "is_deleted": False})
+        beds = await bed_repo.get_multi(
+            filters={"hostel_id": hostel_id, "is_deleted": False}
+        )
+        
     else:
-        if current_user.hostel_id:
+        # ✅ FIX: Use primary_hostel_id to avoid lazy loading
+        user_hostel_id = current_user.primary_hostel_id
+        if user_hostel_id:
             beds = await bed_repo.get_multi(
-                filters={"hostel_id": current_user.hostel_id, "is_deleted": False}
+                filters={"hostel_id": user_hostel_id, "is_deleted": False}
             )
         else:
-            raise HTTPException(status_code=400, detail="hostel_id or room_id required")
+            raise HTTPException(
+                status_code=400, 
+                detail="hostel_id or room_id required"
+            )
 
     return beds
+
+
+@router.get("/beds/{bed_id}", response_model=BedResponse)
+async def get_bed(
+    bed_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get bed by ID."""
+    bed_repo = BedRepository(Bed, db)
+    bed = await bed_repo.get(bed_id)
+
+    if not bed or bed.is_deleted:
+        raise HTTPException(status_code=404, detail="Bed not found")
+
+    check_hostel_access(current_user, bed.hostel_id)
+
+    return bed
 
 
 @router.post("/beds", response_model=BedResponse, status_code=status.HTTP_201_CREATED)
@@ -246,33 +362,107 @@ async def create_bed(
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new bed."""
+    """
+    Create a new bed in a room.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    
+    **Body:**
+    - `room_id`: Room to add bed to
+    - `number`: Bed number (e.g., "A1", "B2")
+    """
     room_repo = RoomRepository(Room, db)
     bed_repo = BedRepository(Bed, db)
 
+    # Verify room exists
     room = await room_repo.get(request.room_id)
     if not room or room.is_deleted:
         raise HTTPException(status_code=404, detail="Room not found")
 
     check_hostel_access(current_user, room.hostel_id)
 
+    # Check room capacity
+    existing_beds = await bed_repo.get_by_room(request.room_id)
+    if len(existing_beds) >= room.capacity:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Room capacity ({room.capacity}) reached. Cannot add more beds."
+        )
+
+    # Check for duplicate bed number in room
+    for bed in existing_beds:
+        if bed.number == request.number:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Bed number '{request.number}' already exists in this room"
+            )
+
+    # Create bed
     bed_data = request.model_dump()
     bed_data["hostel_id"] = room.hostel_id
 
     bed = await bed_repo.create(bed_data)
     await db.commit()
+    
+    # ✅ FIX: Refresh to get all fields
+    await db.refresh(bed)
 
     return bed
 
 
-# ✅ FIXED: Bed soft delete
+@router.patch("/beds/{bed_id}", response_model=BedResponse)
+async def update_bed(
+    bed_id: int,
+    request: BedUpdate,
+    current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update bed details.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    """
+    bed_repo = BedRepository(Bed, db)
+
+    bed = await bed_repo.get(bed_id)
+    if not bed or bed.is_deleted:
+        raise HTTPException(status_code=404, detail="Bed not found")
+
+    check_hostel_access(current_user, bed.hostel_id)
+
+    # Check for duplicate bed number if changing
+    update_data = request.model_dump(exclude_unset=True)
+    if "number" in update_data and update_data["number"] != bed.number:
+        room_beds = await bed_repo.get_by_room(bed.room_id)
+        for other_bed in room_beds:
+            if other_bed.id != bed_id and other_bed.number == update_data["number"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Bed number '{update_data['number']}' already exists in this room"
+                )
+
+    bed = await bed_repo.update(bed_id, update_data)
+    await db.commit()
+    
+    # ✅ FIX: Refresh to get updated fields
+    await db.refresh(bed)
+
+    return bed
+
+
 @router.delete("/beds/{bed_id}", response_model=MessageResponse)
 async def delete_bed(
     bed_id: int,
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft delete bed."""
+    """
+    Soft delete bed.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    
+    **Note:** Cannot delete occupied beds
+    """
     bed_repo = BedRepository(Bed, db)
 
     bed = await bed_repo.get(bed_id)
@@ -287,21 +477,23 @@ async def delete_bed(
             detail="Cannot delete occupied bed. Please vacate it first."
         )
 
-    # ✅ CHANGED: Use soft_delete instead of delete
     await bed_repo.soft_delete(bed_id)
     await db.commit()
 
     return MessageResponse(message="Bed deleted successfully")
 
 
-# ✅ NEW: Restore endpoint for beds
 @router.post("/beds/{bed_id}/restore", response_model=BedResponse)
 async def restore_bed(
     bed_id: int,
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Restore a soft-deleted bed."""
+    """
+    Restore a soft-deleted bed.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    """
     from sqlalchemy import select
     
     result = await db.execute(
@@ -323,6 +515,8 @@ async def restore_bed(
         "deleted_at": None
     })
     await db.commit()
+    
+    # ✅ FIX: Refresh to get updated state
     await db.refresh(bed)
     
     return bed
@@ -335,7 +529,16 @@ async def assign_bed(
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Assign a tenant to a bed."""
+    """
+    Assign a tenant to a bed.
+    
+    **Permissions:** Super Admin or Hostel Admin
+    
+    **Body:**
+    - `tenant_id`: Tenant to assign
+    
+    **Note:** Bed must be vacant and tenant must not have another bed
+    """
     bed_repo = BedRepository(Bed, db)
 
     bed = await bed_repo.get(bed_id)
@@ -345,13 +548,46 @@ async def assign_bed(
     check_hostel_access(current_user, bed.hostel_id)
 
     if bed.is_occupied:
-        raise HTTPException(status_code=400, detail="Bed is already occupied")
+        raise HTTPException(
+            status_code=400, 
+            detail="Bed is already occupied"
+        )
 
+    # Verify tenant exists and belongs to same hostel
+    from app.repositories.tenant import TenantRepository
+    from app.models.tenant import TenantProfile
+    
+    tenant_repo = TenantRepository(TenantProfile, db)
+    tenant = await tenant_repo.get(request.tenant_id)
+    
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    if tenant.hostel_id != bed.hostel_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant and bed must belong to same hostel"
+        )
+    
+    # Check if tenant already has a bed
+    if tenant.current_bed_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tenant is already assigned to bed ID {tenant.current_bed_id}"
+        )
+
+    # Assign bed
     bed = await bed_repo.update(
         bed_id,
-        {"tenant_id": request.tenant_id, "is_occupied": True},
+        {
+            "tenant_id": request.tenant_id, 
+            "is_occupied": True
+        },
     )
     await db.commit()
+    
+    # ✅ FIX: Refresh to get updated state
+    await db.refresh(bed)
 
     return bed
 
@@ -362,7 +598,11 @@ async def vacate_bed(
     current_user: User = Depends(require_role([UserRole.SUPER_ADMIN, UserRole.HOSTEL_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ):
-    """Vacate a bed."""
+    """
+    Vacate a bed (remove tenant assignment).
+    
+    **Permissions:** Super Admin or Hostel Admin
+    """
     bed_repo = BedRepository(Bed, db)
 
     bed = await bed_repo.get(bed_id)
@@ -371,7 +611,70 @@ async def vacate_bed(
 
     check_hostel_access(current_user, bed.hostel_id)
 
-    bed = await bed_repo.update(bed_id, {"tenant_id": None, "is_occupied": False})
+    if not bed.is_occupied:
+        raise HTTPException(
+            status_code=400,
+            detail="Bed is not occupied"
+        )
+
+    bed = await bed_repo.update(
+        bed_id, 
+        {
+            "tenant_id": None, 
+            "is_occupied": False
+        }
+    )
     await db.commit()
+    
+    # ✅ FIX: Refresh to get updated state
+    await db.refresh(bed)
 
     return bed
+
+
+# ===== BULK OPERATIONS =====
+
+@router.get("/rooms/{room_id}/beds", response_model=List[BedResponse])
+async def get_room_beds(
+    room_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all beds in a room.
+    
+    **Convenience endpoint** for getting all beds in a specific room.
+    """
+    room_repo = RoomRepository(Room, db)
+    bed_repo = BedRepository(Bed, db)
+    
+    # Verify room exists
+    room = await room_repo.get(room_id)
+    if not room or room.is_deleted:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    check_hostel_access(current_user, room.hostel_id)
+    
+    # Get beds
+    beds = await bed_repo.get_by_room(room_id)
+    
+    return beds
+
+
+@router.get("/hostels/{hostel_id}/available-beds", response_model=List[BedResponse])
+async def get_available_beds(
+    hostel_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all available (unoccupied) beds in a hostel.
+    
+    **Useful for:** Assigning new tenants to beds
+    """
+    check_hostel_access(current_user, hostel_id)
+    
+    bed_repo = BedRepository(Bed, db)
+    beds = await bed_repo.get_available_beds(hostel_id)
+    
+    return beds
