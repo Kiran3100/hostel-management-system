@@ -1,4 +1,4 @@
-"""User models - REFACTORED WITH SEPARATE TABLES FOR EACH USER TYPE."""
+"""User models - FIXED RELATIONSHIPS."""
 
 from datetime import datetime
 from enum import Enum as PyEnum
@@ -58,6 +58,13 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         "Visitor", back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
     
+    # ✅ FIX: Many-to-many with hostels (moved from HostelAdmin to User)
+    hostels: Mapped[List["Hostel"]] = relationship(
+        "Hostel",
+        secondary=user_hostel_association,
+        back_populates="admins"
+    )
+    
     # Common relationships
     refresh_tokens: Mapped[List["RefreshToken"]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
@@ -105,8 +112,9 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         """Get list of hostel IDs this user has access to."""
         if self.role == UserRole.SUPER_ADMIN:
             return []  # Super admin has access to all
-        elif self.role == UserRole.HOSTEL_ADMIN and self.hostel_admin:
-            return [h.id for h in self.hostel_admin.hostels]
+        elif self.role == UserRole.HOSTEL_ADMIN:
+            # ✅ FIX: Access through user.hostels, not user.hostel_admin.hostels
+            return [h.id for h in self.hostels]
         elif self.role == UserRole.TENANT and self.tenant:
             return [self.tenant.hostel_id]
         elif self.role == UserRole.VISITOR and self.visitor:
@@ -175,12 +183,7 @@ class HostelAdmin(Base, TimestampMixin):
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="hostel_admin")
     
-    # Many-to-many with hostels
-    hostels: Mapped[List["Hostel"]] = relationship(
-        "Hostel",
-        secondary=user_hostel_association,
-        back_populates="admins"
-    )
+    # ✅ FIX: Removed hostels relationship - now accessed via user.hostels
     
     __table_args__ = (
         Index("idx_hostel_admins_user_id", "user_id"),
@@ -191,12 +194,7 @@ class HostelAdmin(Base, TimestampMixin):
 # ===== TENANT TABLE =====
 
 class Tenant(Base, TimestampMixin, SoftDeleteMixin):
-    """
-    Tenant data - replaces TenantProfile.
-    
-    This table stores all tenant-specific information including
-    personal details, documents, and hostel assignment.
-    """
+    """Tenant data."""
     
     __tablename__ = "tenants"
     
@@ -344,7 +342,7 @@ class Visitor(Base, TimestampMixin):
         return datetime.utcnow() > self.visitor_expires_at
 
 
-# ===== REFRESH TOKEN (unchanged) =====
+# ===== REFRESH TOKEN =====
 
 class RefreshToken(Base, TimestampMixin):
     """Refresh token model."""
@@ -363,7 +361,7 @@ class RefreshToken(Base, TimestampMixin):
     __table_args__ = (Index("idx_refresh_tokens_user_id", "user_id"),)
 
 
-# ===== OTP CODE (unchanged) =====
+# ===== OTP CODE =====
 
 class OTPCode(Base, TimestampMixin):
     """OTP code model for phone authentication."""
