@@ -1,0 +1,52 @@
+# Core FastAPI
+fastapi
+uvicorn[standard]
+
+# Database (ASYNC - using asyncpg)
+sqlalchemy
+asyncpg
+alembic
+
+# Pydantic
+pydantic[email]
+pydantic-settings
+
+# Authentication & Security
+PyJWT
+cryptography
+passlib[bcrypt]
+bcrypt
+python-multipart
+
+# Redis
+redis
+
+# HTTP Client
+httpx
+
+# Payment Gateway
+setuptools
+razorpay
+
+# Notifications
+twilio
+
+# File Processing
+pillow
+reportlab
+openpyxl
+
+# Timezone
+pytz
+
+# Dev Dependencies (optional)
+pytest
+pytest-asyncio
+pytest-cov
+factory-boy
+faker
+black
+isort
+flake8
+mypy
+apscheduler
