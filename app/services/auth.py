@@ -1,4 +1,4 @@
-"""Authentication service - FIXED VERSION."""
+"""Authentication service - FIXED VERSION WITH AUTOMATIC TENANT PROFILE CREATION."""
 
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any
@@ -57,10 +57,14 @@ class AuthService:
         role: str,
         hostel_code: Optional[str]
     ) -> Dict[str, Any]:
-        """Register a new user and return user data as dict"""
+        """Register a new user and return user data as dict.
+        
+        ✅ FIXED: Automatically creates TenantProfile when role is TENANT.
+        """
         
         from app.models.user import User
         from app.models.hostel import Hostel
+        from app.models.tenant import TenantProfile
         
         # Validate input
         if not email and not phone:
@@ -89,11 +93,11 @@ class AuthService:
                 raise NotFoundError(f"Hostel with code {hostel_code} not found")
             hostel_id = hostel.id
         
-        # ✅ FIXED: Create new user with correct field name 'password_hash'
+        # Create new user
         new_user = User(
             email=email,
             phone=phone,
-            password_hash=hash_password(password),  # ✅ CORRECT: use password_hash
+            password_hash=hash_password(password),
             role=role,
             primary_hostel_id=hostel_id,
             is_active=True,
@@ -103,6 +107,33 @@ class AuthService:
         
         self.db.add(new_user)
         await self.db.flush()
+        
+        # ✅ FIX: Automatically create TenantProfile for TENANT role
+        # This ensures both admin-created and self-registered tenants have profiles
+        if role == "TENANT" and hostel_id:
+            # Check if profile already exists (shouldn't happen, but just in case)
+            stmt = select(TenantProfile).where(TenantProfile.user_id == new_user.id)
+            result = await self.db.execute(stmt)
+            existing_profile = result.scalar_one_or_none()
+            
+            if not existing_profile:
+                # Create a basic tenant profile
+                # Use email or phone to derive a default full_name
+                if email:
+                    full_name = email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                else:
+                    full_name = f"Tenant {phone[-4:]}"
+                
+                tenant_profile = TenantProfile(
+                    user_id=new_user.id,
+                    hostel_id=hostel_id,
+                    full_name=full_name,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                
+                self.db.add(tenant_profile)
+                await self.db.flush()
         
         # Store the data before commit
         user_data = {
@@ -144,7 +175,6 @@ class AuthService:
         if not user:
             return None
         
-        # ✅ FIXED: Use user.password_hash (correct field name)
         if not verify_password(password, user.password_hash):
             return None
         
