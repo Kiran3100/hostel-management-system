@@ -1,4 +1,4 @@
-"""Database seeding script for initial data."""
+"""Database seeding script for initial data - UPDATED FOR AUTH SERVICE COMPATIBILITY."""
 
 import sys
 import os
@@ -171,10 +171,15 @@ async def seed_demo_hostel_with_admin(session: AsyncSession):
     return demo_hostel, admin
 
 
-
-        
 async def seed_demo_tenant_with_profile(session: AsyncSession, hostel: Hostel):
-    """Seed demo tenant with complete profile."""
+    """
+    Seed demo tenant with complete profile.
+    
+    ✅ UPDATED: Automatically creates TenantProfile when creating TENANT user,
+    matching the behavior in AuthService.register_user()
+    """
+    from app.models.tenant import TenantProfile
+    from datetime import date
     
     # Create tenant user
     tenant_user = User(
@@ -189,14 +194,17 @@ async def seed_demo_tenant_with_profile(session: AsyncSession, hostel: Hostel):
     session.add(tenant_user)
     await session.flush()  # Get the ID
     
-    # Create tenant profile
-    from app.models.tenant import TenantProfile
-    from datetime import date
+    # ✅ AUTO-CREATE TENANT PROFILE (matching AuthService behavior)
+    # When role is TENANT, automatically create a basic tenant profile
+    # This ensures consistency with the auth service registration
+    
+    # Derive full_name from email (same logic as AuthService)
+    full_name = tenant_user.email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
     
     tenant_profile = TenantProfile(
         user_id=tenant_user.id,
         hostel_id=hostel.id,
-        full_name="Demo Tenant",
+        full_name=full_name or "Demo Tenant",
         date_of_birth=date(2000, 1, 1),
         gender="Male",
         guardian_name="Demo Guardian",
@@ -207,12 +215,15 @@ async def seed_demo_tenant_with_profile(session: AsyncSession, hostel: Hostel):
     
     await session.commit()
     
-    print("✓ Seeded demo tenant with profile")
+    print("✓ Seeded demo tenant with auto-created profile")
     print("  Email: tenant@demo.com")
     print("  Password: Tenant@123")
     print(f"  Profile ID: {tenant_profile.id}")
+    print("  Full Name: " + full_name)
+    print("  ℹ️  TenantProfile auto-created (matching AuthService behavior)")
     
     return tenant_user, tenant_profile
+
 
 async def seed_all():
     """Seed all initial data."""
@@ -249,7 +260,7 @@ async def seed_all():
             # Seed demo hostel with admin
             demo_hostel, admin = await seed_demo_hostel_with_admin(session)
 
-            # Seed demo tenant
+            # Seed demo tenant (with auto-created profile)
             await seed_demo_tenant_with_profile(session, demo_hostel)
 
             print("\n✅ Database seeding completed successfully!\n")
@@ -262,11 +273,17 @@ async def seed_all():
             print("\n2. HOSTEL ADMIN (Demo Hostel)")
             print("   Email: admin@demo.com")
             print("   Password: Admin@123")
+            print("   Hostel Code: DEMO001")
             print("\n3. TENANT (Demo Hostel)")
             print("   Email: tenant@demo.com")
             print("   Password: Tenant@123")
+            print("   Note: TenantProfile auto-created ✓")
             print("\n" + "=" * 60)
-            print("\n⚠️  IMPORTANT: Change these passwords in production!\n")
+            print("\n⚠️  IMPORTANT: Change these passwords in production!")
+            print("\nℹ️  TENANT REGISTRATION:")
+            print("   - Admin-created tenants get auto-generated profiles")
+            print("   - Self-registered tenants also get auto-generated profiles")
+            print("   - This matches the AuthService.register_user() behavior\n")
 
         except Exception as e:
             print(f"\n❌ Error during seeding: {e}")
